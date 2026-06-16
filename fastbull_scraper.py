@@ -88,7 +88,22 @@ def scrape_fastbull(url):
     except Exception as e:
         return f"❌ Scraping error: {e}"
 
-def build_message():
+def build_individual_messages():
+    """Build individual messages for each asset (for Discord)."""
+    today = datetime.date.today().strftime("%Y-%m-%d")
+    messages = []
+    
+    header = f"📊 **FastBull Daily Technicals**\n🗓 {today}\n\n"
+    
+    for asset_name, url in assets.items():
+        data = scrape_fastbull(url)
+        msg = header + f"**{asset_name}**\n{data}"
+        messages.append(msg)
+    
+    return messages
+
+def build_full_message():
+    """Build the full message (for Telegram)."""
     today = datetime.date.today().strftime("%Y-%m-%d")
     msg = f"📊 **FastBull Daily Technicals**\n🗓 {today}\n\n"
     for asset_name, url in assets.items():
@@ -115,14 +130,25 @@ def send_to_telegram(text):
     except Exception as e:
         print(f"Telegram error: {e}")
 
-def send_to_discord(text):
-    """Send message to Discord with error logging."""
+def send_to_discord_split(messages):
+    """Send messages to Discord in chunks to avoid 2000 char limit."""
     try:
         print("[DEBUG] Initializing Discord webhook...")
-        webhook = DiscordWebhook(url=DISCORD_WEBHOOK, content=text)
-        print("[DEBUG] Executing Discord webhook...")
-        result = webhook.execute()
-        print(f"✅ Discord sent successfully. Response status: {result.status_code}")
+        webhook = DiscordWebhook(url=DISCORD_WEBHOOK)
+        
+        total_sent = 0
+        for i, msg in enumerate(messages, 1):
+            print(f"[DEBUG] Sending Discord message {i}/{len(messages)} ({len(msg)} chars)...")
+            webhook.content = msg
+            result = webhook.execute()
+            
+            if result.status_code == 204 or result.status_code == 200:
+                print(f"✅ Discord message {i} sent successfully.")
+                total_sent += 1
+            else:
+                print(f"❌ Discord message {i} failed with status {result.status_code}")
+        
+        print(f"✅ Discord: {total_sent}/{len(messages)} messages sent successfully.")
     except Exception as e:
         print(f"❌ Discord failed: {type(e).__name__}: {e}", file=sys.stderr)
         raise
@@ -132,15 +158,18 @@ if __name__ == "__main__":
     print("FastBull Scraper Started")
     print("=" * 50)
     
-    msg = build_message()
-    print(f"\n[DEBUG] Message built ({len(msg)} characters)")
-    print(f"[DEBUG] First 200 chars of message:\n{msg[:200]}\n")
+    # Build messages
+    individual_messages = build_individual_messages()
+    full_message = build_full_message()
+    
+    print(f"\n[DEBUG] Built {len(individual_messages)} individual asset messages")
+    print(f"[DEBUG] Full message size: {len(full_message)} characters")
     
     print("\n--- Sending to Telegram ---")
-    send_to_telegram(msg)
+    send_to_telegram(full_message)
     
     print("\n--- Sending to Discord ---")
-    send_to_discord(msg)
+    send_to_discord_split(individual_messages)
     
     print("\n" + "=" * 50)
     print("FastBull Scraper Completed")
