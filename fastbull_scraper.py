@@ -4,6 +4,12 @@ import os
 import datetime
 import sys
 import asyncio
+import time
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.chrome.options import Options
 from telegram import Bot
 from discord_webhook import DiscordWebhook
 
@@ -45,64 +51,132 @@ HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 }
 
-def scrape_technicals(url):
-    """Extract technical indicator data from the page."""
-    try:
-        resp = requests.get(url, headers=HEADERS, timeout=15)
-        resp.raise_for_status()
-        soup = BeautifulSoup(resp.text, "html.parser")
-
-        # Try multiple selectors to find technical indicators
-        indicators = {}
-        
-        # Look for any table or div containing technical data
-        tables = soup.find_all("table")
-        for table in tables:
-            rows = table.find_all("tr")
-            for row in rows:
-                cells = row.find_all(["td", "th"])
-                if len(cells) >= 2:
-                    # Try to extract indicator name and value/signal
-                    cell_text = [cell.get_text(strip=True) for cell in cells]
-                    if cell_text[0] and cell_text[1]:
-                        # Look for key technical indicators
-                        indicator_name = cell_text[0].lower()
-                        if any(x in indicator_name for x in ["rsi", "macd", "ma", "sma", "ema", "bollinger", "stoch", "atr", "adx", "signal"]):
-                            indicators[cell_text[0]] = cell_text[1] if len(cell_text) > 1 else "N/A"
-        
-        # Look for price data
-        price_data = {}
-        price_elements = soup.find_all("span", class_=lambda x: x and ("price" in x.lower() or "bid" in x.lower() or "ask" in x.lower()))
-        
-        # Extract current price/bid/ask
-        texts = soup.get_text()
-        lines = texts.split('\n')
-        
-        # Look for common technical indicator patterns
-        for i, line in enumerate(lines):
-            line_clean = line.strip()
-            if line_clean and len(line_clean) < 100:
-                # RSI
-                if "RSI" in line_clean or "rsi" in line_clean.lower():
-                    if any(char.isdigit() for char in line_clean):
-                        indicators["RSI"] = line_clean
-                # MACD
-                elif "MACD" in line_clean or "macd" in line_clean.lower():
-                    if any(char.isdigit() for char in line_clean):
-                        indicators["MACD"] = line_clean
-                # Moving Averages
-                elif "MA" in line_clean or "SMA" in line_clean or "EMA" in line_clean:
-                    if any(char.isdigit() for char in line_clean):
-                        indicators[line_clean.split()[0]] = line_clean
-        
-        if indicators:
-            lines = [f"{k}: {v}" for k, v in list(indicators.items())[:6]]
-            return "\n".join(lines) if lines else "No technical data available"
-        else:
-            return "⚠️ Could not locate technical indicators on page"
+def get_selenium_driver():
+    """Initialize Selenium WebDriver with headless Chrome."""
+    chrome_options = Options()
+    chrome_options.add_argument("--headless")
+    chrome_options.add_argument("--no-sandbox")
+    chrome_options.add_argument("--disable-dev-shm-usage")
+    chrome_options.add_argument("--disable-gpu")
+    chrome_options.add_argument(f"user-agent={HEADERS['User-Agent']}")
     
+    driver = webdriver.Chrome(options=chrome_options)
+    return driver
+
+def scrape_overview(driver, url):
+    """Extract price data from Overview tab."""
+    try:
+        driver.get(url)
+        time.sleep(2)  # Wait for page load
+        
+        overview_data = {}
+        
+        # Get current price
+        try:
+            price_elem = driver.find_element(By.CSS_SELECTOR, "[class*='price'], [class*='current']")
+            overview_data['price'] = price_elem.text
+        except:
+            overview_data['price'] = "N/A"
+        
+        # Get price change
+        try:
+            change_elem = driver.find_element(By.CSS_SELECTOR, "[class*='change'], [class*='percent']")
+            overview_data['change'] = change_elem.text
+        except:
+            overview_data['change'] = "N/A"
+        
+        return overview_data
     except Exception as e:
-        return f"❌ Error: {str(e)[:50]}"
+        return {"error": f"Overview error: {str(e)[:50]}"}
+
+def scrape_technicals(driver):
+    """Extract technical analysis and pivot points from Technicals tab."""
+    try:
+        # Click on Technicals tab
+        tech_tab = WebDriverWait(driver, 10).until(
+            EC.element_to_be_clickable((By.XPATH, "//div[contains(text(), 'Technicals')] | //button[contains(text(), 'Technicals')]"))
+        )
+        tech_tab.click()
+        time.sleep(2)  # Wait for content to load
+        
+        soup = BeautifulSoup(driver.page_source, "html.parser")
+        technicals = {}
+        
+        # Look for Technical Analysis section
+        tech_sections = soup.find_all("div", class_=lambda x: x and "technical" in x.lower())
+        
+        indicators = []
+        for section in tech_sections:
+            rows = section.find_all(["tr", "div"])
+            for row in rows[:10]:  # Limit to first 10 items
+                text = row.get_text(strip=True)
+                if text and len(text) < 100:
+                    indicators.append(text)
+        
+        technicals['indicators'] = indicators[:8] if indicators else ["No technical data found"]
+        
+        # Look for Pivot Points
+        pivot_section = soup.find("div", string=lambda x: x and "Pivot" in x if x else False)
+        if pivot_section:
+            pivot_text = pivot_section.get_text()
+            technicals['pivot_points'] = pivot_text
+        else:
+            technicals['pivot_points'] = "No pivot point data found"
+        
+        return technicals
+    except Exception as e:
+        return {"error": f"Technicals error: {str(e)[:50]}"}
+
+def scrape_asset(url):
+    """Scrape both overview and technical data for an asset."""
+    driver = None
+    try:
+        driver = get_selenium_driver()
+        
+        overview = scrape_overview(driver, url)
+        time.sleep(1)
+        technicals = scrape_technicals(driver)
+        
+        return {
+            "overview": overview,
+            "technicals": technicals
+        }
+    except Exception as e:
+        return {"error": str(e)[:50]}
+    finally:
+        if driver:
+            driver.quit()
+
+def format_asset_message(asset_name, data):
+    """Format asset data into a clean message."""
+    if "error" in data:
+        return f"**{asset_name}**\n❌ {data['error']}"
+    
+    msg = f"**{asset_name}**\n"
+    msg += "=" * 30 + "\n\n"
+    
+    # Overview section
+    overview = data.get("overview", {})
+    if "price" in overview:
+        msg += f"💰 **Price:** {overview['price']}\n"
+    if "change" in overview:
+        msg += f"📊 **Change:** {overview['change']}\n"
+    
+    msg += "\n"
+    
+    # Technicals section
+    technicals = data.get("technicals", {})
+    if "indicators" in technicals:
+        msg += "**Technical Indicators (15m, 1H):**\n"
+        for indicator in technicals['indicators'][:6]:
+            if indicator and not indicator.startswith("error"):
+                msg += f"  • {indicator}\n"
+    
+    # Pivot Points section
+    if "pivot_points" in technicals and technicals['pivot_points'] != "No pivot point data found":
+        msg += f"\n**Pivot Points:**\n{technicals['pivot_points'][:200]}\n"
+    
+    return msg
 
 def build_individual_messages():
     """Build individual messages for each asset (for Discord)."""
@@ -110,8 +184,9 @@ def build_individual_messages():
     messages = []
     
     for asset_name, url in assets.items():
-        data = scrape_technicals(url)
-        msg = f"📊 **{asset_name}**\n🗓 {today}\n\n{data}"
+        print(f"[DEBUG] Scraping {asset_name}...")
+        data = scrape_asset(url)
+        msg = f"📊 **{asset_name}**\n🗓 {today}\n\n" + format_asset_message(asset_name, data)
         messages.append(msg)
     
     return messages
@@ -122,8 +197,9 @@ def build_full_message():
     msg = f"📊 **Daily Technical Analysis**\n🗓 {today}\n{'='*40}\n\n"
     
     for asset_name, url in assets.items():
-        data = scrape_technicals(url)
-        msg += f"**{asset_name}**\n{data}\n\n"
+        print(f"[DEBUG] Scraping {asset_name} for Telegram...")
+        data = scrape_asset(url)
+        msg += format_asset_message(asset_name, data) + "\n\n"
     
     return msg
 
@@ -169,11 +245,14 @@ def send_to_discord_split(messages):
 
 if __name__ == "__main__":
     print("=" * 50)
-    print("Technical Analysis Scraper Started")
+    print("Technical Analysis Scraper Started (Selenium)")
     print("=" * 50)
     
     # Build messages
+    print("\n[DEBUG] Building Discord messages...")
     individual_messages = build_individual_messages()
+    
+    print("\n[DEBUG] Building Telegram message...")
     full_message = build_full_message()
     
     print(f"\n[DEBUG] Built {len(individual_messages)} individual asset messages")
