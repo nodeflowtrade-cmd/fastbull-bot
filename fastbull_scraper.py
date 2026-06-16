@@ -3,21 +3,27 @@ from bs4 import BeautifulSoup
 import os
 import datetime
 import sys
+import asyncio
 from telegram import Bot
 from discord_webhook import DiscordWebhook
 
 # ------- YOUR CREDENTIALS (stored as GitHub Secrets) -------
-TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "")
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN_BOTFATHER", "")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 DISCORD_WEBHOOK = os.environ.get("DISCORD_WEBHOOK", "")
 
 # Validate secrets
 if not TELEGRAM_TOKEN:
-    print("ERROR: TELEGRAM_TOKEN not set", file=sys.stderr)
+    print("ERROR: TELEGRAM_TOKEN_BOTFATHER not set", file=sys.stderr)
+    sys.exit(1)
 if not TELEGRAM_CHAT_ID:
     print("ERROR: TELEGRAM_CHAT_ID not set", file=sys.stderr)
+    sys.exit(1)
 if not DISCORD_WEBHOOK:
     print("ERROR: DISCORD_WEBHOOK not set", file=sys.stderr)
+    sys.exit(1)
+
+print("[DEBUG] All secrets loaded successfully ✓")
 
 # ------- ASSET LIST -------
 assets = {
@@ -90,17 +96,24 @@ def build_message():
         msg += f"**{asset_name}**\n{data}\n\n"
     return msg
 
-def send_to_telegram(text):
-    """Send message to Telegram with error logging."""
+async def send_to_telegram_async(text):
+    """Send message to Telegram asynchronously."""
     try:
-        print("[DEBUG] Initializing Telegram bot...")
-        bot = Bot(token=TELEGRAM_TOKEN)
-        print(f"[DEBUG] Sending to Telegram chat ID: {TELEGRAM_CHAT_ID}")
-        bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=text, parse_mode="Markdown")
-        print("✅ Telegram sent successfully.")
+        print("[DEBUG] Initializing Telegram bot async...")
+        async with Bot(token=TELEGRAM_TOKEN) as bot:
+            print(f"[DEBUG] Sending to Telegram chat ID: {TELEGRAM_CHAT_ID}")
+            await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=text, parse_mode="Markdown")
+            print("✅ Telegram sent successfully.")
     except Exception as e:
         print(f"❌ Telegram failed: {type(e).__name__}: {e}", file=sys.stderr)
         raise
+
+def send_to_telegram(text):
+    """Wrapper to send Telegram message."""
+    try:
+        asyncio.run(send_to_telegram_async(text))
+    except Exception as e:
+        print(f"Telegram error: {e}")
 
 def send_to_discord(text):
     """Send message to Discord with error logging."""
@@ -108,8 +121,8 @@ def send_to_discord(text):
         print("[DEBUG] Initializing Discord webhook...")
         webhook = DiscordWebhook(url=DISCORD_WEBHOOK, content=text)
         print("[DEBUG] Executing Discord webhook...")
-        webhook.execute()
-        print("✅ Discord sent successfully.")
+        result = webhook.execute()
+        print(f"✅ Discord sent successfully. Response status: {result.status_code}")
     except Exception as e:
         print(f"❌ Discord failed: {type(e).__name__}: {e}", file=sys.stderr)
         raise
@@ -121,18 +134,13 @@ if __name__ == "__main__":
     
     msg = build_message()
     print(f"\n[DEBUG] Message built ({len(msg)} characters)")
+    print(f"[DEBUG] First 200 chars of message:\n{msg[:200]}\n")
     
     print("\n--- Sending to Telegram ---")
-    try:
-        send_to_telegram(msg)
-    except Exception as e:
-        print(f"Telegram error: {e}")
+    send_to_telegram(msg)
     
     print("\n--- Sending to Discord ---")
-    try:
-        send_to_discord(msg)
-    except Exception as e:
-        print(f"Discord error: {e}")
+    send_to_discord(msg)
     
     print("\n" + "=" * 50)
     print("FastBull Scraper Completed")
