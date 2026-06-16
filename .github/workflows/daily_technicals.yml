@@ -16,7 +16,7 @@ jobs:
         run: pip install requests beautifulsoup4 python-telegram-bot discord-webhook
       - name: Run scraper
         env:
-          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_TOKEN_BOTFATHER: ${{ secrets.TELEGRAM_TOKEN_BOTFATHER }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
         run: python fastbull_scraper.py
