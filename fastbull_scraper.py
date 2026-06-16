@@ -2,13 +2,22 @@ import requests
 from bs4 import BeautifulSoup
 import os
 import datetime
+import sys
 from telegram import Bot
 from discord_webhook import DiscordWebhook
 
 # ------- YOUR CREDENTIALS (stored as GitHub Secrets) -------
-TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
-TELEGRAM_CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
-DISCORD_WEBHOOK = os.environ["DISCORD_WEBHOOK"]
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "")
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
+DISCORD_WEBHOOK = os.environ.get("DISCORD_WEBHOOK", "")
+
+# Validate secrets
+if not TELEGRAM_TOKEN:
+    print("ERROR: TELEGRAM_TOKEN not set", file=sys.stderr)
+if not TELEGRAM_CHAT_ID:
+    print("ERROR: TELEGRAM_CHAT_ID not set", file=sys.stderr)
+if not DISCORD_WEBHOOK:
+    print("ERROR: DISCORD_WEBHOOK not set", file=sys.stderr)
 
 # ------- ASSET LIST -------
 assets = {
@@ -82,22 +91,49 @@ def build_message():
     return msg
 
 def send_to_telegram(text):
-    bot = Bot(token=TELEGRAM_TOKEN)
-    bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=text, parse_mode="Markdown")
+    """Send message to Telegram with error logging."""
+    try:
+        print("[DEBUG] Initializing Telegram bot...")
+        bot = Bot(token=TELEGRAM_TOKEN)
+        print(f"[DEBUG] Sending to Telegram chat ID: {TELEGRAM_CHAT_ID}")
+        bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=text, parse_mode="Markdown")
+        print("✅ Telegram sent successfully.")
+    except Exception as e:
+        print(f"❌ Telegram failed: {type(e).__name__}: {e}", file=sys.stderr)
+        raise
 
 def send_to_discord(text):
-    webhook = DiscordWebhook(url=DISCORD_WEBHOOK, content=text)
-    webhook.execute()
+    """Send message to Discord with error logging."""
+    try:
+        print("[DEBUG] Initializing Discord webhook...")
+        webhook = DiscordWebhook(url=DISCORD_WEBHOOK, content=text)
+        print("[DEBUG] Executing Discord webhook...")
+        webhook.execute()
+        print("✅ Discord sent successfully.")
+    except Exception as e:
+        print(f"❌ Discord failed: {type(e).__name__}: {e}", file=sys.stderr)
+        raise
 
 if __name__ == "__main__":
+    print("=" * 50)
+    print("FastBull Scraper Started")
+    print("=" * 50)
+    
     msg = build_message()
+    print(f"\n[DEBUG] Message built ({len(msg)} characters)")
+    
+    print("\n--- Sending to Telegram ---")
     try:
         send_to_telegram(msg)
-        print("Telegram sent.")
     except Exception as e:
-        print(f"Telegram failed: {e}")
+        print(f"Telegram error: {e}")
+    
+    print("\n--- Sending to Discord ---")
     try:
         send_to_discord(msg)
-        print("Discord sent.")
     except Exception as e:
-        print(f"Discord failed: {e}")
+        print(f"Discord error: {e}")
+    
+    print("\n" + "=" * 50)
+    print("FastBull Scraper Completed")
+    print("=" * 50)
