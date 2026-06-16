@@ -45,59 +45,73 @@ HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 }
 
-def scrape_fastbull(url):
-    """Extract technical indicator data from a FastBull page."""
+def scrape_technicals(url):
+    """Extract technical indicator data from the page."""
     try:
         resp = requests.get(url, headers=HEADERS, timeout=15)
         resp.raise_for_status()
         soup = BeautifulSoup(resp.text, "html.parser")
 
-        # ----- PLACEHOLDER SELECTORS (you must update after inspecting the page) -----
-        # Find the container that holds the "Technical Indicators" or "Oscillators" table.
-        # Example: <div class="technical-indicators"> or <table class="signal-table">
-        # We'll look for text-based clues first.
-        # For now, a generic extraction attempt – you will replace these with real selectors.
-        indicators_section = soup.find("div", class_="indicatorContainer")
-        if not indicators_section:
-            # fallback: try to find a table with 'oscillator' in its class/id
-            indicators_section = soup.find("table", {"class": "oscillatorTable"})
+        # Try multiple selectors to find technical indicators
+        indicators = {}
         
-        # If still None, return raw text snippet
-        if not indicators_section:
-            # try to get the whole body text and return first 500 chars
-            body_text = soup.get_text()
-            return f"⚠️ Could not locate indicator table. Page snippet:\n{body_text[:500]}"
+        # Look for any table or div containing technical data
+        tables = soup.find_all("table")
+        for table in tables:
+            rows = table.find_all("tr")
+            for row in rows:
+                cells = row.find_all(["td", "th"])
+                if len(cells) >= 2:
+                    # Try to extract indicator name and value/signal
+                    cell_text = [cell.get_text(strip=True) for cell in cells]
+                    if cell_text[0] and cell_text[1]:
+                        # Look for key technical indicators
+                        indicator_name = cell_text[0].lower()
+                        if any(x in indicator_name for x in ["rsi", "macd", "ma", "sma", "ema", "bollinger", "stoch", "atr", "adx", "signal"]):
+                            indicators[cell_text[0]] = cell_text[1] if len(cell_text) > 1 else "N/A"
         
-        # Extract rows – each row might contain indicator name, signal, value.
-        rows = indicators_section.find_all("tr")
-        lines = []
-        for row in rows:
-            cols = row.find_all("td")
-            if len(cols) >= 3:
-                name = cols[0].get_text(strip=True)
-                value = cols[1].get_text(strip=True)
-                signal = cols[2].get_text(strip=True)
-                lines.append(f"  • {name}: {value} → {signal}")
-            elif len(cols) == 2:
-                name = cols[0].get_text(strip=True)
-                signal = cols[1].get_text(strip=True)
-                lines.append(f"  • {name}: {signal}")
+        # Look for price data
+        price_data = {}
+        price_elements = soup.find_all("span", class_=lambda x: x and ("price" in x.lower() or "bid" in x.lower() or "ask" in x.lower()))
         
-        return "\n".join(lines) if lines else "ℹ️ No indicator rows found."
+        # Extract current price/bid/ask
+        texts = soup.get_text()
+        lines = texts.split('\n')
+        
+        # Look for common technical indicator patterns
+        for i, line in enumerate(lines):
+            line_clean = line.strip()
+            if line_clean and len(line_clean) < 100:
+                # RSI
+                if "RSI" in line_clean or "rsi" in line_clean.lower():
+                    if any(char.isdigit() for char in line_clean):
+                        indicators["RSI"] = line_clean
+                # MACD
+                elif "MACD" in line_clean or "macd" in line_clean.lower():
+                    if any(char.isdigit() for char in line_clean):
+                        indicators["MACD"] = line_clean
+                # Moving Averages
+                elif "MA" in line_clean or "SMA" in line_clean or "EMA" in line_clean:
+                    if any(char.isdigit() for char in line_clean):
+                        indicators[line_clean.split()[0]] = line_clean
+        
+        if indicators:
+            lines = [f"{k}: {v}" for k, v in list(indicators.items())[:6]]
+            return "\n".join(lines) if lines else "No technical data available"
+        else:
+            return "⚠️ Could not locate technical indicators on page"
     
     except Exception as e:
-        return f"❌ Scraping error: {e}"
+        return f"❌ Error: {str(e)[:50]}"
 
 def build_individual_messages():
     """Build individual messages for each asset (for Discord)."""
     today = datetime.date.today().strftime("%Y-%m-%d")
     messages = []
     
-    header = f"📊 **FastBull Daily Technicals**\n🗓 {today}\n\n"
-    
     for asset_name, url in assets.items():
-        data = scrape_fastbull(url)
-        msg = header + f"**{asset_name}**\n{data}"
+        data = scrape_technicals(url)
+        msg = f"📊 **{asset_name}**\n🗓 {today}\n\n{data}"
         messages.append(msg)
     
     return messages
@@ -105,10 +119,12 @@ def build_individual_messages():
 def build_full_message():
     """Build the full message (for Telegram)."""
     today = datetime.date.today().strftime("%Y-%m-%d")
-    msg = f"📊 **FastBull Daily Technicals**\n🗓 {today}\n\n"
+    msg = f"📊 **Daily Technical Analysis**\n🗓 {today}\n{'='*40}\n\n"
+    
     for asset_name, url in assets.items():
-        data = scrape_fastbull(url)
+        data = scrape_technicals(url)
         msg += f"**{asset_name}**\n{data}\n\n"
+    
     return msg
 
 async def send_to_telegram_async(text):
@@ -121,7 +137,6 @@ async def send_to_telegram_async(text):
             print("✅ Telegram sent successfully.")
     except Exception as e:
         print(f"❌ Telegram failed: {type(e).__name__}: {e}", file=sys.stderr)
-        raise
 
 def send_to_telegram(text):
     """Wrapper to send Telegram message."""
@@ -151,11 +166,10 @@ def send_to_discord_split(messages):
         print(f"✅ Discord: {total_sent}/{len(messages)} messages sent successfully.")
     except Exception as e:
         print(f"❌ Discord failed: {type(e).__name__}: {e}", file=sys.stderr)
-        raise
 
 if __name__ == "__main__":
     print("=" * 50)
-    print("FastBull Scraper Started")
+    print("Technical Analysis Scraper Started")
     print("=" * 50)
     
     # Build messages
@@ -172,5 +186,5 @@ if __name__ == "__main__":
     send_to_discord_split(individual_messages)
     
     print("\n" + "=" * 50)
-    print("FastBull Scraper Completed")
+    print("Technical Analysis Scraper Completed")
     print("=" * 50)
